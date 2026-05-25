@@ -18,11 +18,17 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Encode scripts as base64 for transfer
+        id: encode
+        run: |
+          echo "monitoring=$(base64 -w0 monitoring/monitoring.py)" >> $GITHUB_OUTPUT
+          echo "slack=$(base64 -w0 monitoring/slack_notifier.py)" >> $GITHUB_OUTPUT
+          echo "email=$(base64 -w0 monitoring/email_notifier.py)" >> $GITHUB_OUTPUT
+          echo "wrapper=$(base64 -w0 monitoring/wrapper.sh)" >> $GITHUB_OUTPUT
+
       - name: Deploy via SSM SendCommand
         id: ssm-deploy
         run: |
-          REPO_RAW="https://raw.githubusercontent.com/${{ github.repository }}/main"
-
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ secrets.INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
@@ -31,23 +37,26 @@ jobs:
               "set -e",
               "echo \"=== Installing dependencies ===\"",
               "apt-get update -qq",
-              "apt-get install -y -qq python3 python3-pip curl > /dev/null",
-              "pip3 install --quiet requests psutil",
+              "apt-get install -y -qq python3 python3-pip > /dev/null 2>&1 || true",
+              "pip3 install --quiet requests psutil 2>/dev/null || pip3 install --quiet --break-system-packages requests psutil",
               "",
               "echo \"=== Creating install directory ===\"",
               "mkdir -p /opt/scripts",
               "",
-              "echo \"=== Downloading scripts from GitHub ===\"",
-              "curl -fsSL '"${REPO_RAW}"'/monitoring/monitoring.py -o /opt/scripts/monitoring.py",
-              "curl -fsSL '"${REPO_RAW}"'/monitoring/slack_notifier.py -o /opt/scripts/slack_notifier.py",
-              "curl -fsSL '"${REPO_RAW}"'/monitoring/email_notifier.py -o /opt/scripts/email_notifier.py",
-              "curl -fsSL '"${REPO_RAW}"'/monitoring/wrapper.sh -o /opt/scripts/wrapper.sh",
+              "echo \"=== Deploying scripts (direct transfer via SSM) ===\"",
+              "echo \"${{ steps.encode.outputs.monitoring }}\" | base64 -d > /opt/scripts/monitoring.py",
+              "echo \"${{ steps.encode.outputs.slack }}\" | base64 -d > /opt/scripts/slack_notifier.py",
+              "echo \"${{ steps.encode.outputs.email }}\" | base64 -d > /opt/scripts/email_notifier.py",
+              "echo \"${{ steps.encode.outputs.wrapper }}\" | base64 -d > /opt/scripts/wrapper.sh",
               "",
               "echo \"=== Setting permissions ===\"",
               "chmod +x /opt/scripts/monitoring.py",
               "chmod +x /opt/scripts/slack_notifier.py",
               "chmod +x /opt/scripts/email_notifier.py",
               "chmod +x /opt/scripts/wrapper.sh",
+              "",
+              "echo \"=== Patching email_notifier.py ===\"",
+              "sed -i '\"'\"'s|<p>Please verify the Errors and take actions/p>|<p>Please contact Wazuh Support Team at support@wazuh.com</p>|g'\"'\"' /opt/scripts/email_notifier.py",
               "",
               "echo \"=== Creating secrets file ===\"",
               "cat > /etc/health-checker.secrets << EOF",
@@ -65,14 +74,13 @@ jobs:
               "crontab /tmp/crontab_clean",
               "rm -f /tmp/crontab_clean",
               "",
-              "echo \"=== Running initial health check ===\"",
-              "bash /opt/scripts/wrapper.sh || echo \"Warning: initial run reported issues (expected on first run)\"",
-              "",
+              "echo \"=== Verifying installation ===\"",
+              "ls -la /opt/scripts/",
+              "echo \"\"",
               "echo \"=== Deployment complete ===\"",
               "echo \"Scripts installed at: /opt/scripts/\"",
               "echo \"Secrets file: /etc/health-checker.secrets\"",
-              "echo \"Cron schedule: every 12 hours\"",
-              "ls -la /opt/scripts/"
+              "echo \"Cron schedule: every 12 hours\""
             ]' \
             --output text --query "Command.CommandId")
 
