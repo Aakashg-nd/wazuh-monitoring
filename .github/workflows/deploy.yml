@@ -1,0 +1,108 @@
+name: Deploy Wazuh Monitoring to AWS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy via SSM SendCommand
+        id: ssm-deploy
+        run: |
+          REPO_RAW="https://raw.githubusercontent.com/${{ github.repository }}/main"
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ secrets.INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --timeout-seconds 300 \
+            --parameters commands='[
+              "set -e",
+              "echo \"=== Installing dependencies ===\"",
+              "apt-get update -qq",
+              "apt-get install -y -qq python3 python3-pip curl > /dev/null",
+              "pip3 install --quiet requests psutil",
+              "",
+              "echo \"=== Creating install directory ===\"",
+              "mkdir -p /opt/scripts",
+              "",
+              "echo \"=== Downloading scripts from GitHub ===\"",
+              "curl -fsSL '"${REPO_RAW}"'/monitoring/monitoring.py -o /opt/scripts/monitoring.py",
+              "curl -fsSL '"${REPO_RAW}"'/monitoring/slack_notifier.py -o /opt/scripts/slack_notifier.py",
+              "curl -fsSL '"${REPO_RAW}"'/monitoring/email_notifier.py -o /opt/scripts/email_notifier.py",
+              "curl -fsSL '"${REPO_RAW}"'/monitoring/wrapper.sh -o /opt/scripts/wrapper.sh",
+              "",
+              "echo \"=== Setting permissions ===\"",
+              "chmod +x /opt/scripts/monitoring.py",
+              "chmod +x /opt/scripts/slack_notifier.py",
+              "chmod +x /opt/scripts/email_notifier.py",
+              "chmod +x /opt/scripts/wrapper.sh",
+              "",
+              "echo \"=== Creating secrets file ===\"",
+              "cat > /etc/health-checker.secrets << EOF",
+              "MANAGER_USER=${{ secrets.MANAGER_USER }}",
+              "MANAGER_PASS=${{ secrets.MANAGER_PASS }}",
+              "INDEXER_USER=${{ secrets.INDEXER_USER }}",
+              "INDEXER_PASS=${{ secrets.INDEXER_PASS }}",
+              "EOF",
+              "chmod 600 /etc/health-checker.secrets",
+              "chown root:root /etc/health-checker.secrets",
+              "",
+              "echo \"=== Setting up cron job (every 12 hours) ===\"",
+              "crontab -l 2>/dev/null | grep -v \"wrapper.sh\" > /tmp/crontab_clean || true",
+              "echo \"0 */12 * * * /opt/scripts/wrapper.sh >> /var/log/health-checker-cron.log 2>&1\" >> /tmp/crontab_clean",
+              "crontab /tmp/crontab_clean",
+              "rm -f /tmp/crontab_clean",
+              "",
+              "echo \"=== Running initial health check ===\"",
+              "bash /opt/scripts/wrapper.sh || echo \"Warning: initial run reported issues (expected on first run)\"",
+              "",
+              "echo \"=== Deployment complete ===\"",
+              "echo \"Scripts installed at: /opt/scripts/\"",
+              "echo \"Secrets file: /etc/health-checker.secrets\"",
+              "echo \"Cron schedule: every 12 hours\"",
+              "ls -la /opt/scripts/"
+            ]' \
+            --output text --query "Command.CommandId")
+
+          echo "command_id=${COMMAND_ID}" >> $GITHUB_OUTPUT
+          echo "SSM Command ID: ${COMMAND_ID}"
+
+      - name: Wait for deployment to complete
+        run: |
+          echo "Waiting for SSM command to complete..."
+          aws ssm wait command-executed \
+            --command-id "${{ steps.ssm-deploy.outputs.command_id }}" \
+            --instance-id "${{ secrets.INSTANCE_ID }}" || true
+
+          # Get command output
+          RESULT=$(aws ssm get-command-invocation \
+            --command-id "${{ steps.ssm-deploy.outputs.command_id }}" \
+            --instance-id "${{ secrets.INSTANCE_ID }}")
+
+          STATUS=$(echo "$RESULT" | jq -r '.Status')
+          echo "Command Status: ${STATUS}"
+          echo ""
+          echo "=== STDOUT ==="
+          echo "$RESULT" | jq -r '.StandardOutputContent'
+          echo ""
+          echo "=== STDERR ==="
+          echo "$RESULT" | jq -r '.StandardErrorContent'
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "::error::Deployment failed with status: ${STATUS}"
+            exit 1
+          fi
+
+          echo "Deployment successful!"
