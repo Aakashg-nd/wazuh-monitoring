@@ -1,4 +1,5 @@
 #!/var/ossec/framework/python/bin/python3
+from __future__ import annotations
 # SMTP notification sender
 # Wazuh Inc.
 # Nicolás Curioni <nicolas.curioni@wazuh.com>
@@ -38,7 +39,7 @@ def _format_agents_msg_html(details: dict) -> str:
     )
 
 
-def _get_environment_identity(checks: dict) -> tuple[str, str]:
+def _get_environment_identity(checks: dict):
     """Return manager version and UUID from manager_api check payload."""
     manager_api = checks.get('manager_api', {})
     version = manager_api.get('manager_version') or "unknown"

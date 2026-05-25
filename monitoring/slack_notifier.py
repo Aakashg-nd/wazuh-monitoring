@@ -1,4 +1,5 @@
 #!/var/ossec/framework/python/bin/python3
+from __future__ import annotations
 # Slack notification sender
 # Wazuh Inc. 
 # Nicolás Curioni <nicolas.curioni@wazuh.com>

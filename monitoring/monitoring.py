@@ -1,4 +1,5 @@
 #!/var/ossec/framework/python/bin/python3
+from __future__ import annotations
 """
 Wazuh Environment Health Checker
 Wazuh Inc.
