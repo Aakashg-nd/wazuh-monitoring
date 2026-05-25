@@ -9,11 +9,11 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # === SMTP CONFIGURATION ===
-SMTP_SERVER  = "smtp.gmail.com"
-SMTP_PORT    = 587
-SMTP_USER    = "<SENDER_EMAIL>"
-SMTP_PASS    = "<APP_PASSWORD>"
-DESTINATARIO = "<RECEIPIENT_EMAIL>"
+SMTP_SERVER  = "localhost"
+SMTP_PORT    = 25
+SMTP_USER    = "aakash.gadekar@netradyne.com"
+SMTP_PASS    = ""  # Not needed — Postfix handles relay to Office 365
+DESTINATARIO = "securityops@netradyne.com"
 LOG_PATH     = "/var/log/health-checker.json"
 HOSTNAME     = socket.gethostname()
 
@@ -147,10 +147,11 @@ def send_email_notification():
         msg['Subject'] = subject
         msg.attach(MIMEText(html, 'html'))
 
-        # 5. Send
+        # 5. Send via local Postfix relay
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASS)
+            if SMTP_PASS:
+                server.starttls()
+                server.login(SMTP_USER, SMTP_PASS)
             server.send_message(msg)
 
         alerts_count = len([i for i in issues if i['status'] != 'OK'])
