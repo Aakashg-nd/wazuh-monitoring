@@ -62,14 +62,15 @@ def send_email_notification():
         issues = []
 
         for check_id, details in all_checks.items():
-            # Agent check always includes information 
+            # Agent check — only include if ERROR
             if check_id == 'agents' and details.get('total') is not None:
-                msg = _format_agents_msg_html(details)
-                issues.append({
-                    "name":   "Agent Summary",
-                    "status": details.get('status', 'OK').upper(),
-                    "message": msg
-                })
+                if details.get('status', 'OK').upper() == 'ERROR':
+                    msg = _format_agents_msg_html(details)
+                    issues.append({
+                        "name":   "Agent Summary",
+                        "status": "ERROR",
+                        "message": msg
+                    })
                 continue
 
             
