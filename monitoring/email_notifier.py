@@ -76,6 +76,10 @@ def send_email_notification():
             if details.get('notify') is not True:
                 continue
 
+            # Skip WARNING-level checks — only email on ERROR
+            if details.get('status', '').upper() == 'WARNING':
+                continue
+
             msg = details.get('details') or details.get('issues') or "Review logs"
             if isinstance(msg, list):
                 msg = "<br>".join([f"• {m}" for m in msg])
